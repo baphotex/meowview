@@ -8,6 +8,7 @@ import (
 	"time"
 	"strings"
 	"net/http"
+	"regexp"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
@@ -421,6 +422,16 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 		rkey := c.Query("rkey")
 		did := c.Query("did")
 		validatedDid := validateDID(did)
+		if validatedDid != did {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid did"})
+			return
+		}
+		// validate the rkey 3lq4slogsz52p - it must be a valid string 13 letters, and only alpha numerics
+		re := regexp.MustCompile(`^[a-z0-9]{13}$`)
+		if !re.MatchString(rkey) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid rkey"})
+			return
+		}
 
 		var m MeowResponse
 		err := session.Query(`
