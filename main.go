@@ -6,10 +6,16 @@ import (
 	"encoding/json"
 	"log"
 	"time"
+	"strings"
+	"net/http"
 
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 )
+
+type DIDDocument struct {
+	ID string `json:"id"`
+}
 
 type WebSocketMessage struct {
 	DID    string `json:"did"`
@@ -161,6 +167,14 @@ func main() {
 			}
 			emotion = &truncated
 		}
+		
+		var subject *string
+		if record.Subject != nil {
+			subject = validateSubject(*record.Subject)
+		}
+		else {
+			subject = nil
+		}
 
 		log.Printf("Parsed message - DID: %s, Rkey: %s, Operation: %s", msg.DID, msg.Commit.Rkey, msg.Commit.Operation)
 
@@ -177,7 +191,7 @@ func main() {
 				msg.Commit.CID,
 				msg.DID,  //
 				emotion, // can be nil
-				record.Subject,
+				subject, // can be nil
 			).Exec()
 			if err != nil {
 				log.Println("insert error:", err)
@@ -193,4 +207,85 @@ func main() {
 			log.Printf("Unknown operation: %s\n", op)
 		}
 	}
+}
+
+func validateSubject(subject string) string {
+	// starts with did:plc and starts with did:web, make requet to the did doc or the plc directory
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	if strings.HasPrefix(subject, "did:plc:") {
+		return validatePLCDID(ctx, subject)
+	}
+	
+	if strings.HasPrefix(subject, "did:web:") {
+		return validateWebDID(ctx, subject)
+	}
+	
+	return nil 
+}
+
+func validatePLCDID(ctx context.Context, did string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := fmt.Sprintf("https://plc.directory/%s", did)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		log.Printf("PLC DID request error: %v", err)
+		return nil
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("PLC DID fetch error: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var doc DIDDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		log.Printf("PLC DID decode error: %v", err)
+		return nil
+	}
+
+	return doc.ID
+}
+
+
+func validateWebDID(ctx context.Context, did string) string {
+	parts := strings.SplitN(did, ":", 3)
+	if len(parts) != 3 {
+		return nil
+	}
+
+	domain := parts[2]
+	url := fmt.Sprintf("https://%s/.well-known/did.json", domain)
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		log.Printf("Web DID request error: %v", err)
+		return nil
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Web DID fetch error: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var doc DIDDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		log.Printf("Web DID decode error: %v", err)
+		return nil
+	}
+
+	return doc.ID
 }
