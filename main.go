@@ -160,6 +160,7 @@ func main() {
 				log.Println("emotion too long, truncating to 50 characters")
 			}
 			emotion = &truncated
+		}
 
 		log.Printf("Parsed message - DID: %s, Rkey: %s, Operation: %s", msg.DID, msg.Commit.Rkey, msg.Commit.Operation)
 
@@ -168,17 +169,15 @@ func main() {
 
 		switch op {
 		case "create", "update":
-			recordBytes := []byte(msg.Commit.Record)
-			emotion := msg.Commit.Record.
 			err := session.Query(`
 				INSERT INTO meows (rkey, time_us, cid, did, emotion, subject) 
-				VALUES (?, ?, ?, ?, ?)`,
+				VALUES (?, ?, ?, ?, ?, ?)`,
 				msg.Commit.Rkey,
 				msg.TimeUS,
 				msg.Commit.CID,
 				msg.DID,  //
 				emotion, // can be nil
-				record.Subject
+				record.Subject,
 			).Exec()
 			if err != nil {
 				log.Println("insert error:", err)
