@@ -25,6 +25,12 @@ type WebSocketMessage struct {
 	} `json:"commit"`
 }
 
+type MeowRecord struct {
+	Type    string `json:"$type"`
+	Emotion string `json:"emotion"`
+	Subject string `json:"subject"`
+}
+
 func createKeyspace(session *gocql.Session) error {
 	const maxRetries = 20
 	var err error
@@ -108,7 +114,7 @@ func main() {
 
 	// WebSocket connection remains the same
 	conn, _, err := websocket.DefaultDialer.Dial(
-		"wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=cat.kasey.moe.meow",
+		"wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=moe.kasey.meow",
 		nil,
 	)
 	if err != nil {
@@ -131,6 +137,18 @@ func main() {
 			continue
 		}
 
+		var record MeowRecord
+		if err := json.Unmarshal(msg.Commit.Record, &record); err != nil {
+			log.Println("record parse error:", err)
+			continue
+		}
+		
+		if len(record.Emotion) > 50 {
+			record.Emotion = record.Emotion[:50]
+			log.Println("emotion too long, truncating to 100 characters")
+		}
+
+
 		log.Printf("Parsed message - DID: %s, Rkey: %s, Operation: %s", msg.DID, msg.Commit.Rkey, msg.Commit.Operation)
 
 		op := msg.Commit.Operation
@@ -139,14 +157,16 @@ func main() {
 		switch op {
 		case "create", "update":
 			recordBytes := []byte(msg.Commit.Record)
+			emotion := msg.Commit.Record.
 			err := session.Query(`
-				INSERT INTO meows (rkey, time_us, cid, did, record) 
+				INSERT INTO meows (rkey, time_us, cid, did, emotion, subject) 
 				VALUES (?, ?, ?, ?, ?)`,
 				msg.Commit.Rkey,
 				msg.TimeUS,
 				msg.Commit.CID,
 				msg.DID,  // Added DID value
-				recordBytes,
+				record.Emotion,
+				record.Subject,
 			).Exec()
 			if err != nil {
 				log.Println("insert error:", err)
