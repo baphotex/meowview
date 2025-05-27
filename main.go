@@ -196,14 +196,28 @@ func main() {
 		
 		var emotion *string
 		if record.Emotion != nil {
+			// coerce emotion to a lower case string
+			// exclude possible sql injections and malicious input
+			emotion = strings.ToLower(record.Emotion)
 			truncated := *record.Emotion
 			if len(truncated) > 50 {
 				truncated = (truncated)[:50]
 				log.Println("emotion too long, truncating to 50 characters")
 			}
 			emotion = &truncated
+
+			if strings.Contains(emotion, ";") || strings.Contains(emotion, "'") || strings.Contains(emotion, "\"") || strings.Contains(emotion, "`") {
+				log.Println("emotion contains malicious input, ignoring")
+				continue
+			}
+			if string.Contains(emotion, "create") || string.Contains(emotion, "insert") || string.Contains(emotion, "update") || string.Contains(emotion, "delete") || string.Contains(emotion, "drop") {
+				log.Println("emotion contains malicious input, ignoring")
+				continue
+			}
+			
+
 		}
-		
+		// coerce emotion to 
 		var subject *string
 		if record.Subject != nil {
 			subject = validateSubject(*record.Subject)
