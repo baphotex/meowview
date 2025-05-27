@@ -27,8 +27,8 @@ type WebSocketMessage struct {
 
 type MeowRecord struct {
 	Type    string `json:"$type"`
-	Emotion string `json:"emotion"`
-	Subject string `json:"subject"`
+	Emotion *string `json:"emotion,omitempty"`
+	Subject *string `json:"subject,omitempty"`
 }
 
 func createKeyspace(session *gocql.Session) error {
@@ -69,25 +69,25 @@ func main() {
 
 	systemSession, err := systemCluster.CreateSession()
 	if err != nil {
-		log.Fatal("System session:", err)
+		log.Fatal("system session:", err)
 	}
 	defer systemSession.Close()
 	if err := createKeyspace(systemSession); err != nil {
-		log.Fatal("Create keyspace:", err)
+		log.Fatal("create keyspace:", err)
 	}
 
 	err = systemSession.Query(`
 		CREATE KEYSPACE IF NOT EXISTS cat 
 		WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}`).Exec()
 	if err != nil {
-		log.Fatal("Create keyspace:", err)
+		log.Fatal("create keyspace:", err)
 	}
 
 	// Create table session
 	cluster.Keyspace = "cat"
 	session, err := cluster.CreateSession()
 	if err != nil {
-		log.Fatal("Cassandra session:", err)
+		log.Fatal("cassandra session:", err)
 	}
 	defer session.Close()
 
@@ -98,10 +98,11 @@ func main() {
 			time_us BIGINT,
 			cid TEXT,
 			did TEXT,
-			record BLOB
+			emotion TEXT,
+			subject TEXT
 		)`).Exec()
 	if err != nil {
-		log.Fatal("Create table:", err)
+		log.Fatal("create table:", err)
 	}
 
 	// Create secondary index on DID
@@ -109,7 +110,15 @@ func main() {
 		CREATE INDEX IF NOT EXISTS meows_did_idx 
 		ON meows (did)`).Exec()
 	if err != nil {
-		log.Fatal("Create index:", err)
+		log.Fatal("create actor index:", err)
+	}
+	
+	// create secondary index on subject
+	err = session.Query(`
+		CREATE INDEX IF NOT EXISTS meows_subject_idx 
+		ON meows (subject)`).Exec()
+	if err != nil {
+		log.Fatal("create subject index:", err)
 	}
 
 	// WebSocket connection remains the same
@@ -143,11 +152,14 @@ func main() {
 			continue
 		}
 		
-		if len(record.Emotion) > 50 {
-			record.Emotion = record.Emotion[:50]
-			log.Println("emotion too long, truncating to 100 characters")
-		}
-
+		var emotion *string
+		if record.Emotion != nil {
+			truncated := *record.Emotion
+			if len(truncated) > 50 {
+				truncated = (truncated)[:50]
+				log.Println("emotion too long, truncating to 50 characters")
+			}
+			emotion = &truncated
 
 		log.Printf("Parsed message - DID: %s, Rkey: %s, Operation: %s", msg.DID, msg.Commit.Rkey, msg.Commit.Operation)
 
@@ -164,9 +176,9 @@ func main() {
 				msg.Commit.Rkey,
 				msg.TimeUS,
 				msg.Commit.CID,
-				msg.DID,  // Added DID value
-				record.Emotion,
-				record.Subject,
+				msg.DID,  //
+				emotion, // can be nil
+				record.Subject
 			).Exec()
 			if err != nil {
 				log.Println("insert error:", err)
