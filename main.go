@@ -158,7 +158,7 @@ func main() {
 	
 	go func() {
 		r := setupRouter(session) 
-		if err := r.Run(":8080"); err != nil {
+		if err := r.Run(":8134"); err != nil {
 			log.Fatal("router error:", err)
 		}
 	}
