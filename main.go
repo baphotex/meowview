@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
+	"github.com/google/uuid"
 )
 
 type DIDDocument struct {
@@ -110,7 +111,8 @@ func main() {
 	// Create table with DID column
 	err = session.Query(`
 		CREATE TABLE IF NOT EXISTS meows (
-			rkey TEXT PRIMARY KEY,
+			id UUID PRIMARY KEY,
+			rkey TEXT,
 			time_us BIGINT,
 			cid TEXT,
 			did TEXT,
@@ -119,6 +121,14 @@ func main() {
 		)`).Exec()
 	if err != nil {
 		log.Fatal("create table:", err)
+	}
+	
+	// craete secondary index on rkey
+	err = session.Query(`
+		CREATE INDEX IF NOT EXISTS meows_rkey_idx 
+		ON meows (rkey)`).Exec()
+	if err != nil {
+		log.Fatal("create rkey index:", err)
 	}
 
 	// Create secondary index on DID
@@ -205,12 +215,14 @@ func main() {
 
 		op := msg.Commit.Operation
 		rkey := msg.Commit.Rkey
+		id := uuid.New()
 
 		switch op {
 		case "create", "update":
 			err := session.Query(`
-				INSERT INTO meows (rkey, time_us, cid, did, emotion, subject) 
-				VALUES (?, ?, ?, ?, ?, ?)`,
+				INSERT INTO meows (id, rkey, time_us, cid, did, emotion, subject) 
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				id,
 				msg.Commit.Rkey,
 				msg.TimeUS,
 				msg.Commit.CID,
@@ -319,7 +331,7 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 	r := gin.Default()
 
 	// 1. Get last N meows by time
-	r.GET("/meows", func(c *gin.Context) {
+	r.GET("/_endpoints/getLastMeows", func(c *gin.Context) {
 		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 		if limit > 100 {
 			limit = 100
@@ -349,8 +361,9 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 	})
 
 	// 2. Get meows by DID
-	r.GET("/meows/by-did/:did", func(c *gin.Context) {
-		did := c.Param("did")
+	r.GET("/_endpoints/getActorMeows", func(c *gin.Context) {
+		did := c.Query("did")
+		validatedDid := validateDID(did)
 		var meows []MeowResponse
 
 		iter := session.Query(`
@@ -358,7 +371,7 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 			FROM cat.meows 
 			WHERE did = ?
 			ALLOW FILTERING`,
-			did,
+			validatedDid,
 		).Iter()
 
 		var m MeowResponse
@@ -376,8 +389,9 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 	})
 
 	// 3. Get meows by subject DID
-	r.GET("/meows/by-subject/:did", func(c *gin.Context) {
-		subject := c.Param("did")
+	r.GET("/_endpoints/getSubjectMeows", func(c *gin.Context) {
+		subject := c.Query("did")
+		validatedSubject := validateDID(subject)
 		var meows []MeowResponse
 
 		iter := session.Query(`
@@ -385,7 +399,7 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 			FROM cat.meows 
 			WHERE subject = ?
 			ALLOW FILTERING`,
-			subject,
+			validatedSubject,
 		).Iter()
 
 		var m MeowResponse
@@ -403,9 +417,10 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 	})
 
 	// 4. Get specific meow
-	r.GET("/meows/:rkey", func(c *gin.Context) {
-		rkey := c.Param("rkey")
+	r.GET("/_endpoints/getMeow", func(c *gin.Context) {
+		rkey := c.Query("rkey")
 		did := c.Query("did")
+		validatedDid := validateDID(did)
 
 		var m MeowResponse
 		err := session.Query(`
@@ -413,7 +428,7 @@ func setupRouter(session *gocql.Session) *gin.Engine {
 			FROM cat.meows 
 			WHERE rkey = ? AND did = ?
 			LIMIT 1`,
-			rkey, did,
+			rkey, validatedDid,
 		).Scan(&m.Rkey, &m.TimeUS, &m.CID, &m.DID, &m.Emotion, &m.Subject)
 
 		if err != nil {
