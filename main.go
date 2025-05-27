@@ -26,7 +26,7 @@ type WebSocketMessage struct {
 }
 
 func createKeyspace(session *gocql.Session) error {
-	const maxRetries = 10
+	const maxRetries = 20
 	var err error
 
 	for i := 0; i < maxRetries; i++ {
@@ -39,13 +39,14 @@ func createKeyspace(session *gocql.Session) error {
 		if err == nil {
 			return nil
 		}
-		log.Printf("Keyspace creation attempt %d failed: %v", i+1, err)
-		time.Sleep(2 * time.Second)
+		log.Printf("keyspace creation attempt %d failed: %v", i+1, err)
+		time.Sleep(5 * time.Second)
 	}
 	return fmt.Errorf("failed to create keyspace after %d attempts: %v", maxRetries, err)
 }
 
 func main() {
+	log.Println("starting meow server")
 	cassandraHost := os.Getenv("CASSANDRA_HOST")
 	if cassandraHost == "" {
 		cassandraHost = "127.0.0.1"
@@ -113,6 +114,7 @@ func main() {
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
+	log.Println("connected to websocket")
 	defer conn.Close()
 
 	for {

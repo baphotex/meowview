@@ -24,7 +24,7 @@ services:
       - CASSANDRA_HOST=cassandra
     networks:
       - meow-net
-    entrypoint: ["./wait-for-it.sh", "cassandra:9042", "--", "./meow-app"]
+    entrypoint: ["./wait-for-it.sh", "-t","300", "cassandra:9042", "--", "./meow-app"]
 
 volumes:
   cassandra_data:
