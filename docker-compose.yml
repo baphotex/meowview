@@ -1,7 +1,7 @@
 version: '3.9'
 services:
   cassandra:
-    image: cassandra:latest
+    image: cassandra:4
     ports:
       - "9042:9042"
       - "7000:7000"
@@ -10,6 +10,8 @@ services:
       - cassandra_data:/var/lib/cassandra
     environment:
       - CASSANDRA_CLUSTER_NAME=MeowCluster
+      - HEAP_NEWSIZE=128M
+      - MAX_HEAP_SIZE=256M
       - CASSANDRA_DC=meowcenter1
     networks:
       - meow-net

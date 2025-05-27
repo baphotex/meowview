@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"fmt"
 	"encoding/json"
 	"log"
 	"time"
@@ -24,6 +25,26 @@ type WebSocketMessage struct {
 	} `json:"commit"`
 }
 
+func createKeyspace(session *gocql.Session) error {
+	const maxRetries = 10
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		err = session.Query(`
+			CREATE KEYSPACE IF NOT EXISTS cat 
+			WITH replication = {
+				'class': 'SimpleStrategy',
+				'replication_factor': 1
+			}`).Exec()
+		if err == nil {
+			return nil
+		}
+		log.Printf("Keyspace creation attempt %d failed: %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("failed to create keyspace after %d attempts: %v", maxRetries, err)
+}
+
 func main() {
 	cassandraHost := os.Getenv("CASSANDRA_HOST")
 	if cassandraHost == "" {
@@ -34,11 +55,19 @@ func main() {
 	cluster.ProtoVersion = 4
 
 	// Create keyspace
-	systemSession, err := cluster.CreateSession()
+	systemCluster := gocql.NewCluster(cassandraHost)
+	systemCluster.Keyspace = "system"
+	systemCluster.ProtoVersion = 4
+	systemCluster.Timeout = 10 * time.Second
+
+	systemSession, err := systemCluster.CreateSession()
 	if err != nil {
 		log.Fatal("System session:", err)
 	}
 	defer systemSession.Close()
+	if err := createKeyspace(systemSession); err != nil {
+		log.Fatal("Create keyspace:", err)
+	}
 
 	err = systemSession.Query(`
 		CREATE KEYSPACE IF NOT EXISTS cat 
@@ -88,6 +117,7 @@ func main() {
 
 	for {
 		_, message, err := conn.ReadMessage()
+		log.Printf("Received raw message: %s", string(message))
 		if err != nil {
 			log.Println("read error:", err)
 			continue
@@ -98,6 +128,8 @@ func main() {
 			log.Println("json unmarshal error:", err)
 			continue
 		}
+
+		log.Printf("Parsed message - DID: %s, Rkey: %s, Operation: %s", msg.DID, msg.Commit.Rkey, msg.Commit.Operation)
 
 		op := msg.Commit.Operation
 		rkey := msg.Commit.Rkey
