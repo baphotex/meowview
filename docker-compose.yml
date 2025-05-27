@@ -1,0 +1,31 @@
+version: '3.9'
+services:
+  cassandra:
+    image: cassandra:latest
+    ports:
+      - "9042:9042"
+      - "7000:7000"
+      - "7001:7001"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MeowCluster
+      - CASSANDRA_DC=meowcenter1
+    networks:
+      - meow-net
+
+  meow-app:
+    build: .
+    depends_on:
+      - cassandra
+    environment:
+      - CASSANDRA_HOST=cassandra
+    networks:
+      - meow-net
+    entrypoint: ["./wait-for-it.sh", "cassandra:9042", "--", "./meow-app"]
+
+volumes:
+  cassandra_data:
+
+networks:
+  meow-net:
