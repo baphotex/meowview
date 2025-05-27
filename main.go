@@ -8,7 +8,8 @@ import (
 	"time"
 	"strings"
 	"net/http"
-
+	
+	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 )
@@ -35,6 +36,15 @@ type MeowRecord struct {
 	Type    string `json:"$type"`
 	Emotion *string `json:"emotion,omitempty"`
 	Subject *string `json:"subject,omitempty"`
+}
+
+type MeowResponse struct {
+	Rkey string `json:"rkey"`
+	TimeUS int64 `json:"time_us"`
+	CID string `json:"cid"`
+	DID string `json:"did"`
+	Emotion string `json:"emotion"`
+	Subject string `json:"subject"`
 }
 
 func createKeyspace(session *gocql.Session) error {
@@ -127,6 +137,14 @@ func main() {
 		log.Fatal("create subject index:", err)
 	}
 
+	// create secondary index on time 
+	err = session.QUERY(`
+		CREATE INDEX IF NOT EXISTS meows_time_idx 
+		ON meows (time_us)`).Exec()
+	if err != nil {
+		log.Fatal("create time index:", err)
+	}
+
 	// WebSocket connection remains the same
 	conn, _, err := websocket.DefaultDialer.Dial(
 		"wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=moe.kasey.meow",
@@ -137,6 +155,13 @@ func main() {
 	}
 	log.Println("connected to websocket")
 	defer conn.Close()
+	
+	go func() {
+		r := setupRouter(session) 
+		if err := r.Run(":8080"); err != nil {
+			log.Fatal("router error:", err)
+		}
+	}
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -289,3 +314,121 @@ func validateWebDID(ctx context.Context, did string) string {
 
 	return doc.ID
 }
+
+func setupRouter(session *gocql.Session) *gin.Engine {
+	r := gin.Default()
+
+	// 1. Get last N meows by time
+	r.GET("/meows", func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+		if limit > 100 {
+			limit = 100
+		}
+
+		var meows []MeowResponse
+		iter := session.Query(`
+			SELECT rkey, time_us, cid, did, emotion, subject
+			FROM cat.meows 
+			LIMIT ?
+			ALLOW FILTERING`,
+			limit,
+		).Iter()
+
+		var m MeowResponse
+		for iter.Scan(&m.RKey, &m.TimeUS, &m.CID, &m.DID, &m.Emotion. &m.Subject) {
+			meows = append(meows, m)
+			m = MeowResponse{}
+		}
+
+		if err := iter.Close(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, meows)
+	})
+
+	// 2. Get meows by DID
+	r.GET("/meows/by-did/:did", func(c *gin.Context) {
+		did := c.Param("did")
+		var meows []MeowResponse
+
+		iter := session.Query(`
+			SELECT rkey, time_us, cid, did, emotion, subject
+			FROM cat.meows 
+			WHERE did = ?
+			ALLOW FILTERING`,
+			did,
+		).Iter()
+
+		var m MeowResponse
+		for iter.Scan(&m.RKey, &m.TimeUS, &m.CID, &m.DID, &m.Emotion, &m.Subject) {
+			meows = append(meows, m)
+			m = MeowResponse{}
+		}
+
+		if err := iter.Close(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, meows)
+	})
+
+	// 3. Get meows by subject DID
+	r.GET("/meows/by-subject/:did", func(c *gin.Context) {
+		subject := c.Param("did")
+		var meows []MeowResponse
+
+		iter := session.Query(`
+			SELECT rkey, time_us, cid, did, emotion, subject
+			FROM cat.meows 
+			WHERE subject = ?
+			ALLOW FILTERING`,
+			subject,
+		).Iter()
+
+		var m MeowResponse
+		for iter.Scan(&m.RKey, &m.TimeUS, &m.CID, &m.DID, &m.Emotion, &m.Subject) {
+			meows = append(meows, m)
+			m = MeowResponse{}
+		}
+
+		if err := iter.Close(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, meows)
+	})
+
+	// 4. Get specific meow
+	r.GET("/meows/:rkey", func(c *gin.Context) {
+		rkey := c.Param("rkey")
+		did := c.Query("did")
+
+		var m MeowResponse
+		err := session.Query(`
+			SELECT rkey, time_us, cid, did, emotion, subject
+			FROM cat.meows 
+			WHERE rkey = ? AND did = ?
+			LIMIT 1`,
+			rkey, did,
+		).Scan(&m.Rkey, &m.TimeUS, &m.CID, &m.DID, &m.Emotion, &m.Subject)
+
+		if err != nil {
+			if err == gocql.ErrNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "meow not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		m.RKey = rkey
+		c.JSON(http.StatusOK, m)
+	})
+
+	return r
+}
+
